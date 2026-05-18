@@ -93,6 +93,7 @@ export const authAPI = {
 export const walletAPI = {
   getWallet: () => api.get('/wallet/'),
   deposit: (data) => api.post('/wallet/deposit/', data),
+  withdraw: (data) => api.post('/wallet/withdraw/', data),
   getTransactions: (params) => api.get('/wallet/transactions/', { params }),
   getTransaction: (id) => api.get(`/wallet/transactions/${id}/`),
   linkWeb3Wallet: (data) => api.post('/wallet/web3/link/', data),

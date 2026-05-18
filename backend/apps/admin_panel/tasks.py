@@ -99,20 +99,42 @@ def scan_fraud_signals():
     """
     Periodic fraud signal scanner.
     Detects and persists risk flags for:
-    - LARGE_TRANSACTION: Single tx >= ₹50,000 or 500 USDT
-    - HIGH_FREQUENCY: More than 10 transactions in 10 minutes
-    - RAPID_LARGE_SPENDING: Spending > ₹1,00,000 within 1 hour
+    - LARGE_TRANSACTION
+    - HIGH_FREQUENCY
+    - RAPID_LARGE_SPENDING
+    - RAPID_FIRE_PAYMENTS
+    - SUSPICIOUS_WALLET_REUSE
     """
-    from apps.wallet.models import WalletTransaction
-    from apps.transactions.models import RiskFlag
+    from apps.wallet.models import WalletTransaction, Wallet
+    from apps.transactions.models import RiskFlag, PaymentTransaction
     from django.db.models import Count, Sum
     from django.contrib.auth import get_user_model
+    from core.events import EventDispatcher, DomainEventType
 
     User = get_user_model()
     now = timezone.now()
     window_10m = now - timedelta(minutes=10)
     window_1h = now - timedelta(hours=1)
+    window_1m = now - timedelta(minutes=1)
     flagged_count = 0
+
+    def create_flag(user, wallet, flag_type, severity, details, tx=None):
+        nonlocal flagged_count
+        if not RiskFlag.objects.filter(user=user, flag_type=flag_type, created_at__gte=window_1h).exists():
+            flag = RiskFlag.objects.create(
+                user=user,
+                wallet=wallet,
+                transaction=tx,
+                flag_type=flag_type,
+                severity=severity,
+                details=details,
+            )
+            flagged_count += 1
+            EventDispatcher.dispatch(
+                event_type=DomainEventType.FRAUD_DETECTED,
+                payload={"flag_id": str(flag.id), "flag_type": flag_type, "severity": severity},
+                user_id=str(user.id) if user else None,
+            )
 
     # ── Rule 1: LARGE_TRANSACTION ─────────────────────────────
     large_txs = WalletTransaction.objects.filter(
@@ -121,60 +143,47 @@ def scan_fraud_signals():
         currency="INR",
     ).select_related("wallet__user")
 
-    large_txs_usdt = WalletTransaction.objects.filter(
+    large_txs_usdc = WalletTransaction.objects.filter(
         created_at__gte=window_1h,
         amount__gte=Decimal("500"),
-        currency="USDT",
+        currency="USDC",
     ).select_related("wallet__user")
 
-    for tx in list(large_txs) + list(large_txs_usdt):
-        # Avoid duplicate flags for same tx
+    for tx in list(large_txs) + list(large_txs_usdc):
         if not RiskFlag.objects.filter(transaction=tx, flag_type="LARGE_TRANSACTION").exists():
-            RiskFlag.objects.create(
+            create_flag(
                 user=tx.wallet.user,
                 wallet=tx.wallet,
-                transaction=tx,
                 flag_type="LARGE_TRANSACTION",
                 severity="HIGH" if float(tx.amount) >= 100000 else "MEDIUM",
                 details={
                     "amount": str(tx.amount),
                     "currency": tx.currency,
-                    "category": tx.category,
                     "reference_id": tx.reference_id,
                 },
+                tx=tx
             )
-            flagged_count += 1
 
-    # ── Rule 2: HIGH_FREQUENCY ────────────────────────────────
+    # ── Rule 2: RAPID_FIRE_PAYMENTS ────────────────────────────────
     freq_data = (
-        WalletTransaction.objects.filter(created_at__gte=window_10m)
+        PaymentTransaction.objects.filter(created_at__gte=window_1m)
         .values("wallet_id")
         .annotate(count=Count("id"))
-        .filter(count__gte=10)
+        .filter(count__gte=5)
     )
 
     for row in freq_data:
-        if not RiskFlag.objects.filter(
-            wallet_id=row["wallet_id"],
-            flag_type="HIGH_FREQUENCY",
-            created_at__gte=window_10m,
-        ).exists():
-            from apps.wallet.models import Wallet
-            try:
-                wallet = Wallet.objects.select_related("user").get(pk=row["wallet_id"])
-            except Wallet.DoesNotExist:
-                continue
-            RiskFlag.objects.create(
-                user=wallet.user,
-                wallet=wallet,
-                flag_type="HIGH_FREQUENCY",
-                severity="HIGH",
-                details={
-                    "transaction_count": row["count"],
-                    "window_minutes": 10,
-                },
-            )
-            flagged_count += 1
+        try:
+            wallet = Wallet.objects.select_related("user").get(pk=row["wallet_id"])
+        except Wallet.DoesNotExist:
+            continue
+        create_flag(
+            user=wallet.user,
+            wallet=wallet,
+            flag_type="RAPID_FIRE_PAYMENTS",
+            severity="CRITICAL",
+            details={"payment_count": row["count"], "window_seconds": 60}
+        )
 
     # ── Rule 3: RAPID_LARGE_SPENDING ─────────────────────────
     spending_data = (
@@ -189,27 +198,41 @@ def scan_fraud_signals():
     )
 
     for row in spending_data:
-        if not RiskFlag.objects.filter(
-            wallet_id=row["wallet_id"],
+        try:
+            wallet = Wallet.objects.select_related("user").get(pk=row["wallet_id"])
+        except Wallet.DoesNotExist:
+            continue
+        create_flag(
+            user=wallet.user,
+            wallet=wallet,
             flag_type="RAPID_LARGE_SPENDING",
-            created_at__gte=window_1h,
-        ).exists():
-            from apps.wallet.models import Wallet
-            try:
-                wallet = Wallet.objects.select_related("user").get(pk=row["wallet_id"])
-            except Wallet.DoesNotExist:
-                continue
-            RiskFlag.objects.create(
+            severity="CRITICAL",
+            details={"total_spent_inr": str(row["total"]), "window_hours": 1}
+        )
+        
+    # ── Rule 4: SUSPICIOUS_WALLET_REUSE ─────────────────────────
+    # Detect if the same Web3 address is linked to multiple active users
+    reuse_data = (
+        Wallet.objects.filter(web3_address__isnull=False)
+        .values("web3_address")
+        .annotate(user_count=Count("user", distinct=True))
+        .filter(user_count__gte=2)
+    )
+    
+    for row in reuse_data:
+        wallets = Wallet.objects.filter(web3_address=row["web3_address"]).select_related("user")
+        for wallet in wallets:
+            create_flag(
                 user=wallet.user,
                 wallet=wallet,
-                flag_type="RAPID_LARGE_SPENDING",
-                severity="CRITICAL",
+                flag_type="SUSPICIOUS_WALLET_REUSE",
+                severity="HIGH",
                 details={
-                    "total_spent_inr": str(row["total"]),
-                    "window_hours": 1,
-                },
+                    "web3_address": row["web3_address"],
+                    "linked_users_count": row["user_count"]
+                }
             )
-            flagged_count += 1
 
     logger.info(f"[FRAUD SCAN] Completed. {flagged_count} new risk flags created.")
     return {"flags_created": flagged_count}
+

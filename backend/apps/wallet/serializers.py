@@ -41,6 +41,16 @@ class DepositSerializer(serializers.Serializer):
         return value
 
 
+class WithdrawSerializer(serializers.Serializer):
+    currency = serializers.ChoiceField(choices=["USDT"])
+    amount = serializers.DecimalField(max_digits=15, decimal_places=8, min_value=Decimal("0.01"))
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be positive")
+        return value
+
+
 class AuditLogSerializer(serializers.ModelSerializer):
     actor_email = serializers.ReadOnlyField(source="actor.email")
 

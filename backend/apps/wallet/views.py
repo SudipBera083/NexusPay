@@ -9,7 +9,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from core.response import APIResponse
 from core.pagination import StandardResultsPagination
 from .models import Wallet, WalletTransaction
-from .serializers import WalletSerializer, WalletTransactionSerializer, DepositSerializer
+from .serializers import WalletSerializer, WalletTransactionSerializer, DepositSerializer, WithdrawSerializer
 from .services import WalletService
 
 logger = logging.getLogger("nexuspay")
@@ -49,6 +49,34 @@ class DepositView(APIView):
         return APIResponse.created(
             data=WalletTransactionSerializer(tx).data,
             message=f"Successfully deposited {data['amount']} {data['currency']}",
+        )
+
+
+class WithdrawView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "payment"
+
+    @extend_schema(tags=["Wallet"], request=WithdrawSerializer, summary="Withdraw USDT to Web3 Wallet")
+    def post(self, request):
+        serializer = WithdrawSerializer(data=request.data)
+        if not serializer.is_valid():
+            return APIResponse.validation_error(serializer.errors)
+
+        wallet = Wallet.objects.get(user=request.user)
+        data = serializer.validated_data
+        
+        try:
+            tx = WalletService.withdraw_to_web3(
+                wallet=wallet,
+                amount=data["amount"],
+                actor=request.user,
+            )
+        except ValueError as e:
+            return APIResponse.error(str(e), status_code=400)
+            
+        return APIResponse.success(
+            message=f"Successfully initiated withdrawal of {data['amount']} USDT to {wallet.web3_address}",
         )
 
 

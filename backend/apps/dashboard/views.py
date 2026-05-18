@@ -58,6 +58,7 @@ class DashboardOverviewView(APIView):
                 "id": str(wallet.id),
                 "inr_balance": str(wallet.inr_balance),
                 "usdt_balance": str(wallet.usdt_balance),
+                "web3_address": wallet.web3_address,
                 "portfolio_value_inr": str(portfolio_inr.quantize(Decimal("0.01"))),
             },
             "exchange": {
@@ -85,20 +86,20 @@ class SpendingAnalyticsView(APIView):
         days = int(request.query_params.get("days", 30))
         since = timezone.now() - timedelta(days=days)
 
-        # Daily spending
+        # Daily spending — use CONFIRMED web3 payments
         daily_spending = (
-            PaymentTransaction.objects.filter(user=user, created_at__gte=since, status="COMPLETED")
+            PaymentTransaction.objects.filter(user=user, created_at__gte=since, status="CONFIRMED")
             .annotate(day=TruncDay("created_at"))
             .values("day")
-            .annotate(total=Sum("amount_inr"), count=Count("id"))
+            .annotate(total=Sum("usdt_converted"), count=Count("id"))
             .order_by("day")
         )
 
-        # Category breakdown
+        # Category breakdown via merchant name
         category_breakdown = (
-            PaymentTransaction.objects.filter(user=user, created_at__gte=since, status="COMPLETED")
-            .values("merchant_category")
-            .annotate(total=Sum("amount_inr"), count=Count("id"))
+            PaymentTransaction.objects.filter(user=user, created_at__gte=since, status="CONFIRMED")
+            .values("merchant__name")
+            .annotate(total=Sum("usdt_converted"), count=Count("id"))
             .order_by("-total")
         )
 
@@ -111,7 +112,7 @@ class SpendingAnalyticsView(APIView):
             .order_by("day")
         )
 
-        # Balance history (last N transactions)
+        # Balance history (last N wallet transactions)
         balance_history = (
             WalletTransaction.objects.filter(
                 wallet__user=user, created_at__gte=since
@@ -127,3 +128,4 @@ class SpendingAnalyticsView(APIView):
             "conversion_trend": list(conversion_trend),
             "balance_history": list(balance_history),
         })
+

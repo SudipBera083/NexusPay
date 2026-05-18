@@ -16,6 +16,8 @@ urlpatterns = [
     path("api/v1/transactions/", include("apps.transactions.urls", namespace="transactions")),
     path("api/v1/dashboard/", include("apps.dashboard.urls", namespace="dashboard")),
     path("api/v1/admin-panel/", include("apps.admin_panel.urls", namespace="admin_panel")),
+    path("api/v1/blockchain/", include("apps.blockchain.urls", namespace="blockchain")),
+    path("api/v1/merchants/", include("apps.merchants.urls", namespace="merchants")),
 
     # API Docs
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Wallet as WalletIcon, Plus, ArrowDown, ArrowUp, Filter, Search } from 'lucide-react'
+import { Wallet as WalletIcon, Plus, Minus, ArrowDown, ArrowUp, Filter, Search } from 'lucide-react'
 import { walletAPI } from '@/api/client'
 import { useWalletStore } from '@/store/walletStore'
 import { formatINR, formatRelativeTime, getStatusColor } from '@/utils/format'
 import toast from 'react-hot-toast'
+import { useNavigate } from 'react-router-dom'
 
 export default function Wallet() {
   const { wallet, setWallet, transactions, setTransactions } = useWalletStore()
@@ -13,9 +14,15 @@ export default function Wallet() {
   const [depositCurrency, setDepositCurrency] = useState('INR')
   const [depositAmount, setDepositAmount] = useState('')
   const [depositing, setDepositing] = useState(false)
+  
+  const [showWithdraw, setShowWithdraw] = useState(false)
+  const [withdrawAmount, setWithdrawAmount] = useState('')
+  const [withdrawing, setWithdrawing] = useState(false)
+
   const [filter, setFilter] = useState({ currency: '', category: '' })
   const [page, setPage] = useState(1)
   const [meta, setMeta] = useState(null)
+  const navigate = useNavigate()
 
   useEffect(() => { fetchData() }, [filter])
 
@@ -52,6 +59,34 @@ export default function Wallet() {
     }
   }
 
+  const handleWithdrawClick = () => {
+    if (!wallet?.web3_address) {
+      toast.error("Please link your Web3 wallet in the Dashboard first.")
+      navigate("/dashboard")
+      return
+    }
+    setShowWithdraw(true)
+  }
+
+  const handleWithdraw = async () => {
+    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
+      toast.error('Enter a valid amount')
+      return
+    }
+    setWithdrawing(true)
+    try {
+      await walletAPI.withdraw({ currency: 'USDT', amount: withdrawAmount })
+      toast.success(`Withdrawal of ${withdrawAmount} USDT initiated`)
+      setShowWithdraw(false)
+      setWithdrawAmount('')
+      fetchData()
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Withdrawal failed')
+    } finally {
+      setWithdrawing(false)
+    }
+  }
+
   const inrBalance = parseFloat(wallet?.inr_balance || 0)
   const usdtBalance = parseFloat(wallet?.usdt_balance || 0)
 
@@ -59,9 +94,14 @@ export default function Wallet() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-black text-white">Wallet</h1>
-        <button onClick={() => setShowDeposit(true)} className="btn-primary flex items-center gap-2 py-2 px-4 text-sm">
-          <Plus className="w-4 h-4" /> Deposit
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowDeposit(true)} className="btn-primary flex items-center gap-2 py-2 px-4 text-sm">
+            <Plus className="w-4 h-4" /> Deposit
+          </button>
+          <button onClick={handleWithdrawClick} className="btn-secondary flex items-center gap-2 py-2 px-4 text-sm">
+            <Minus className="w-4 h-4" /> Withdraw
+          </button>
+        </div>
       </div>
 
       {/* Balance Cards */}
@@ -132,6 +172,42 @@ export default function Wallet() {
               </div>
               <button onClick={handleDeposit} disabled={depositing} className="btn-primary w-full py-3 flex items-center justify-center gap-2">
                 {depositing ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <><ArrowDown className="w-4 h-4" />Deposit {depositCurrency}</>}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Withdraw Modal */}
+      {showWithdraw && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setShowWithdraw(false)}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
+            className="glass-card p-8 w-full max-w-sm border border-emerald-500/20"
+          >
+            <h2 className="text-xl font-black text-white mb-6">Withdraw USDT</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-white/60 mb-2 block">Destination Address</label>
+                <div className="glass-card p-3 border border-white/10 text-xs font-mono text-emerald-400 break-all">
+                  {wallet?.web3_address}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-white/60 mb-2 block">Amount (USDT)</label>
+                <input
+                  type="number"
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  placeholder="50.00"
+                  className="input-field"
+                  id="withdraw-amount"
+                />
+              </div>
+              <button onClick={handleWithdraw} disabled={withdrawing} className="btn-primary w-full py-3 flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 border-emerald-500">
+                {withdrawing ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <><ArrowUp className="w-4 h-4" />Withdraw USDT</>}
               </button>
             </div>
           </motion.div>

@@ -14,7 +14,7 @@ app.autodiscover_tasks()
 app.conf.beat_schedule = {
     "refresh-exchange-rates": {
         "task": "apps.exchange.tasks.refresh_exchange_rates",
-        "schedule": 60.0,  # Every 60 seconds
+        "schedule": 60.0,
     },
     "cleanup-expired-otps": {
         "task": "apps.authentication.tasks.cleanup_expired_otps",
@@ -24,9 +24,18 @@ app.conf.beat_schedule = {
         "task": "apps.admin_panel.tasks.generate_daily_audit_report",
         "schedule": crontab(hour=0, minute=0),
     },
-    "scan-fraud-signals": {
-        "task": "apps.admin_panel.tasks.scan_fraud_signals",
-        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+    # ─── Blockchain Indexer ─────────────────────────────────────────
+    "poll-pending-blockchain-transactions": {
+        "task": "apps.blockchain.tasks.poll_pending_transactions",
+        "schedule": 15.0,  # Every 15 seconds
+    },
+    "expire-stale-qr-codes": {
+        "task": "apps.blockchain.tasks.expire_stale_qr_codes",
+        "schedule": crontab(minute="*/5"),
+    },
+    "blockchain-provider-health-check": {
+        "task": "apps.blockchain.tasks.blockchain_provider_health_check",
+        "schedule": crontab(minute="*/5"),
     },
 }
 

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from decouple import config
+from core.blockchain.config import load_blockchain_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -45,6 +46,9 @@ LOCAL_APPS = [
     "apps.dashboard",
     "apps.admin_panel",
     "apps.notifications",
+    "apps.blockchain",
+    "apps.merchants",
+    "apps.reconciliation",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -293,5 +297,20 @@ LOGGING = {
         "django": {"handlers": ["console", "file"], "level": "WARNING", "propagate": False},
         "nexuspay": {"handlers": ["console", "file"], "level": "DEBUG", "propagate": False},
         "celery": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "nexuspay.blockchain": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "nexuspay.events": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
     },
 }
+
+# ─── Blockchain Configuration ─────────────────────────────────────────────────
+
+BLOCKCHAIN_CONFIG = load_blockchain_config()
+
+# ─── WalletConnect ────────────────────────────────────────────────────────────
+
+WALLETCONNECT_PROJECT_ID = config("WALLETCONNECT_PROJECT_ID", default="demo-project-id")
+
+# ─── QR Payment ───────────────────────────────────────────────────────────────
+
+QR_HMAC_SECRET = config("QR_HMAC_SECRET", default="insecure-dev-secret")
+QR_DEFAULT_EXPIRY_SECONDS = config("QR_DEFAULT_EXPIRY_SECONDS", default=300, cast=int)

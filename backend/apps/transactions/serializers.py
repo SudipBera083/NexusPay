@@ -16,6 +16,12 @@ class ConversionHistorySerializer(serializers.ModelSerializer):
 
 
 class PaymentTransactionSerializer(serializers.ModelSerializer):
+    merchant_name = serializers.CharField(source='merchant.name', read_only=True)
+    merchant_category = serializers.SerializerMethodField()
+
+    def get_merchant_category(self, obj):
+        return obj.metadata.get('category', 'General') if obj.metadata else 'General'
+
     class Meta:
         model = PaymentTransaction
         fields = [
@@ -24,6 +30,7 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
             "conversion_rate", "description", "status", "reference_id", "created_at",
         ]
         read_only_fields = fields
+
 
 
 class ConvertRequestSerializer(serializers.Serializer):

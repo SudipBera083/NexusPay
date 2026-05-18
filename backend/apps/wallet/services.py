@@ -98,11 +98,8 @@ class WalletService:
         # 1. Debit
         balance_before_from = locked_from.get_balance(currency)
         balance_after_from = balance_before_from - amount
-        if currency == CurrencyChoice.INR:
-            locked_from.inr_balance = balance_after_from
-        else:
-            locked_from.usdt_balance = balance_after_from
-        locked_from.save(update_fields=["inr_balance" if currency == CurrencyChoice.INR else "usdt_balance", "updated_at"])
+        locked_from.set_balance(currency, balance_after_from)
+        locked_from.save(update_fields=[locked_from.balance_field(currency), "updated_at"])
 
         tx_debit = WalletTransaction.objects.create(
             journal_entry=journal,
@@ -123,11 +120,8 @@ class WalletService:
         # 2. Credit
         balance_before_to = locked_to.get_balance(currency)
         balance_after_to = balance_before_to + amount
-        if currency == CurrencyChoice.INR:
-            locked_to.inr_balance = balance_after_to
-        else:
-            locked_to.usdt_balance = balance_after_to
-        locked_to.save(update_fields=["inr_balance" if currency == CurrencyChoice.INR else "usdt_balance", "updated_at"])
+        locked_to.set_balance(currency, balance_after_to)
+        locked_to.save(update_fields=[locked_to.balance_field(currency), "updated_at"])
 
         tx_credit = WalletTransaction.objects.create(
             journal_entry=journal,
@@ -211,6 +205,28 @@ class WalletService:
             category="DEPOSIT",
             description=f"Simulated {currency} deposit",
             metadata={"source": "simulation"},
+            actor=actor,
+        )
+
+    @staticmethod
+    def withdraw_to_web3(wallet: Wallet, amount: Decimal, actor=None) -> JournalEntry:
+        """Process an external Web3 USDT withdrawal via Double-Entry routing"""
+        if not wallet.web3_address:
+            raise ValueError("Wallet does not have a linked Web3 address")
+        
+        if amount <= 0:
+            raise ValueError("Withdrawal amount must be greater than zero")
+
+        treasury = WalletService.get_treasury_wallet(WalletType.TREASURY_EXTERNAL)
+        
+        return WalletService.transfer(
+            from_wallet=wallet,
+            to_wallet=treasury,
+            currency=CurrencyChoice.USDT,
+            amount=amount,
+            category="WITHDRAWAL",
+            description=f"External withdrawal to {wallet.web3_address}",
+            metadata={"destination_address": wallet.web3_address},
             actor=actor,
         )
 

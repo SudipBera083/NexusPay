@@ -15,6 +15,14 @@ import Analytics from '@/pages/Analytics'
 import AdminPanel from '@/pages/AdminPanel'
 import Layout from '@/components/Layout'
 
+// Web3 Pages
+import MerchantDashboard from '@/pages/web3/MerchantDashboard'
+import QRGenerator from '@/pages/web3/QRGenerator'
+import QRScanner from '@/pages/web3/QRScanner'
+import PaymentConfirm from '@/pages/web3/PaymentConfirm'
+import BlockchainExplorer from '@/pages/web3/BlockchainExplorer'
+import TransactionDetail from '@/pages/web3/TransactionDetail'
+
 function ProtectedRoute({ children, adminOnly = false }) {
   const { isAuthenticated, user } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
@@ -60,6 +68,14 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          
+          {/* Web3 / Merchant Routes */}
+          <Route path="/merchant" element={<MerchantDashboard />} />
+          <Route path="/merchant/qr-generate" element={<QRGenerator />} />
+          <Route path="/pay/scan" element={<QRScanner />} />
+          <Route path="/pay/confirm/:nonce" element={<PaymentConfirm />} />
+          <Route path="/explorer" element={<BlockchainExplorer />} />
+          <Route path="/explorer/tx/:hash" element={<TransactionDetail />} />
         </Route>
 
         {/* Fallback */}

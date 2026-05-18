@@ -6,21 +6,6 @@ from django.conf import settings
 from apps.wallet.models import Wallet, WalletType
 
 
-class Merchant(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=255, unique=True)
-    category = models.CharField(max_length=100, default="General")
-    wallet = models.OneToOneField(Wallet, on_delete=models.CASCADE, related_name="merchant_profile")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "merchants"
-        verbose_name = "Merchant"
-
-    def __str__(self):
-        return f"{self.name} ({self.category})"
-
-
 class ConversionStatus(models.TextChoices):
     PENDING = "PENDING", "Pending"
     COMPLETED = "COMPLETED", "Completed"
@@ -58,11 +43,18 @@ class ConversionHistory(models.Model):
         return f"{self.from_amount} {self.from_currency} → {self.to_amount} {self.to_currency}"
 
 
+class PaymentStatus(models.TextChoices):
+    CREATED = "CREATED", "Payment Created"
+    SUBMITTED = "SUBMITTED", "Submitted to Blockchain"
+    CONFIRMED = "CONFIRMED", "Confirmed & Settled"
+    FAILED = "FAILED", "Failed"
+
+
 class PaymentTransaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="payments")
-    merchant = models.ForeignKey(Merchant, on_delete=models.PROTECT, related_name="payments")
+    merchant = models.ForeignKey("merchants.Merchant", on_delete=models.PROTECT, related_name="payments")
     amount_inr = models.DecimalField(max_digits=15, decimal_places=2)
     inr_from_balance = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
     usdt_converted = models.DecimalField(max_digits=15, decimal_places=8, default=Decimal("0.00000000"))
@@ -70,17 +62,29 @@ class PaymentTransaction(models.Model):
     conversion_rate = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True)
     description = models.TextField(blank=True)
     status = models.CharField(
-        max_length=20,
-        choices=[("PENDING", "Pending"), ("COMPLETED", "Completed"), ("FAILED", "Failed"), ("REFUNDED", "Refunded")],
-        default="COMPLETED",
+        max_length=30,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.CREATED,
+        db_index=True,
     )
     reference_id = models.CharField(max_length=100, unique=True, db_index=True)
     related_conversion = models.ForeignKey(
         ConversionHistory, null=True, blank=True, on_delete=models.SET_NULL, related_name="payments"
     )
     wallet_tx = models.UUIDField(null=True, blank=True)
+    qr_code = models.ForeignKey(
+        "merchants.MerchantQRCode", null=True, blank=True, on_delete=models.SET_NULL, related_name="payment"
+    )
+    blockchain_tx = models.ForeignKey(
+        "blockchain.BlockchainTransaction", null=True, blank=True, on_delete=models.SET_NULL, related_name="payment"
+    )
+    blockchain_tx_hash = models.CharField(max_length=66, unique=True, null=True, blank=True)
+    settlement_event = models.ForeignKey(
+        "blockchain.SettlementEvent", null=True, blank=True, on_delete=models.SET_NULL, related_name="payment"
+    )
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "payment_transactions"
@@ -88,6 +92,43 @@ class PaymentTransaction(models.Model):
 
     def __str__(self):
         return f"Payment ₹{self.amount_inr} to {self.merchant.name} [{self.status}]"
+
+    def transition_to(self, new_status: str) -> bool:
+        """Enforces valid state transitions."""
+        valid_transitions = {
+            PaymentStatus.CREATED: [PaymentStatus.SUBMITTED, PaymentStatus.FAILED],
+            PaymentStatus.SUBMITTED: [PaymentStatus.CONFIRMED, PaymentStatus.FAILED],
+            PaymentStatus.CONFIRMED: [],
+            PaymentStatus.FAILED: [],
+        }
+
+        allowed = valid_transitions.get(self.status, [])
+        if new_status not in allowed:
+            raise ValueError(
+                f"Invalid Payment transition: {self.status} → {new_status}. "
+                f"Allowed: {[s for s in allowed]}"
+            )
+
+        self.status = new_status
+        self.save(update_fields=["status", "updated_at"])
+        
+        # Dispatch event on critical transitions
+        from core.events import EventDispatcher, DomainEventType
+        event_map = {
+            PaymentStatus.CREATED: DomainEventType.PAYMENT_CREATED,
+            PaymentStatus.SUBMITTED: DomainEventType.BLOCKCHAIN_SUBMITTED,
+            PaymentStatus.CONFIRMED: DomainEventType.BLOCKCHAIN_CONFIRMED,
+            PaymentStatus.FAILED: DomainEventType.PAYMENT_FAILED,
+        }
+        
+        if new_status in event_map:
+            EventDispatcher.dispatch(
+                event_type=event_map[new_status],
+                payload={"payment_id": str(self.id), "status": new_status},
+                user_id=str(self.user_id),
+            )
+            
+        return True
 
 
 class RiskFlagSeverity(models.TextChoices):

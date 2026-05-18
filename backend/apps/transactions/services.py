@@ -8,7 +8,8 @@ from core.exceptions import InsufficientBalanceError, ExchangeRateUnavailableErr
 from apps.wallet.models import CurrencyChoice, WalletType
 from apps.wallet.services import WalletService
 from apps.exchange.services import RateService
-from .models import ConversionHistory, PaymentTransaction, Merchant
+from .models import ConversionHistory, PaymentTransaction, PaymentStatus
+from apps.merchants.models import Merchant, MerchantQRCode, QRCodeStatus
 
 logger = logging.getLogger("nexuspay")
 
@@ -118,6 +119,105 @@ class PaymentService:
 
     @staticmethod
     @transaction.atomic
+    def initiate_qr_payment(
+        user,
+        qr_nonce: str,
+        idempotency_key: str = None,
+    ) -> PaymentTransaction:
+        """
+        Step 1: User scans a QR code and initiates payment.
+        Validates QR and creates PaymentTransaction in CREATED state.
+        """
+        try:
+            qr_code = MerchantQRCode.objects.select_related("merchant").get(nonce=qr_nonce)
+        except MerchantQRCode.DoesNotExist:
+            raise ValueError("QR code not found")
+
+        if qr_code.is_expired:
+            raise ValueError("QR code is expired")
+            
+        if qr_code.is_consumed:
+            raise ValueError("QR code has already been consumed")
+
+        if idempotency_key:
+            existing = PaymentTransaction.objects.filter(metadata__idempotency_key=idempotency_key).first()
+            if existing:
+                return existing
+
+        wallet = WalletService.get_wallet(user)
+        reference_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
+
+        amount_usdc = qr_code.amount_usdc
+        merchant = qr_code.merchant
+
+        payment = PaymentTransaction.objects.create(
+            user=user,
+            wallet=wallet,
+            merchant=merchant,
+            amount_inr=Decimal("0.00"),
+            inr_from_balance=Decimal("0.00"),
+            usdt_converted=amount_usdc,
+            inr_from_conversion=Decimal("0.00"),
+            conversion_rate=Decimal("0.00"),
+            description=f"Web3 Payment to {merchant.name}",
+            status=PaymentStatus.CREATED,
+            reference_id=reference_id,
+            qr_code=qr_code,
+            metadata={"idempotency_key": idempotency_key} if idempotency_key else {}
+        )
+        
+        qr_code.created_for_user = user
+        qr_code.save(update_fields=["created_for_user"])
+
+        return payment
+
+    @staticmethod
+    @transaction.atomic
+    def submit_blockchain_signature(
+        payment_id: str,
+        user,
+        tx_hash: str,
+        wallet_address: str,
+    ) -> PaymentTransaction:
+        """
+        Step 2: User signed and broadcasted the transaction via MetaMask.
+        We link the tx_hash to the PaymentTransaction and transition to SUBMITTED.
+        """
+        try:
+            payment = PaymentTransaction.objects.select_related("qr_code").get(id=payment_id)
+        except PaymentTransaction.DoesNotExist:
+            raise ValueError("Payment not found")
+
+        if payment.user != user:
+            raise PermissionError("Payment does not belong to this user")
+
+        if payment.status != PaymentStatus.CREATED:
+            raise ValueError(f"Cannot submit signature for payment in state: {payment.status}")
+
+        # Basic anti-spoof check (the indexer will strictly verify the on-chain sender)
+        if payment.wallet.web3_address and payment.wallet.web3_address.lower() != wallet_address.lower():
+            logger.warning(f"Wallet mismatch. DB: {payment.wallet.web3_address}, Provided: {wallet_address}")
+            # We don't block here because users might use a different linked wallet,
+            # but the indexer will verify if the on-chain sender is authorized.
+
+        # Ensure unique tx_hash globally to prevent replay/duplicate settlement
+        if PaymentTransaction.objects.filter(blockchain_tx_hash=tx_hash).exists():
+            raise ValueError("Transaction hash already submitted for another payment")
+
+        payment.blockchain_tx_hash = tx_hash
+        payment.save(update_fields=["blockchain_tx_hash"])
+        payment.transition_to(PaymentStatus.SUBMITTED)
+        
+        qr_code = payment.qr_code
+        if qr_code:
+            qr_code.blockchain_tx_hash = tx_hash
+            qr_code.save(update_fields=["blockchain_tx_hash"])
+
+        logger.info(f"[PAYMENT] {payment_id} submitted to blockchain: {tx_hash}")
+        return payment
+
+    @staticmethod
+    @transaction.atomic
     def process_payment(
         user,
         merchant_name: str,
@@ -127,106 +227,79 @@ class PaymentService:
         idempotency_key: str = None,
     ) -> PaymentTransaction:
         """
-        Smart payment engine with Double-Entry Merchant settlement.
+        Legacy INR payment flow: debit from user wallet directly to a shadow merchant.
+        Creates or retrieves a shadow Merchant by name for tracking purposes.
         """
+        from apps.merchants.models import Merchant, MerchantStatus
+        from apps.wallet.models import WalletType
+
+        wallet = WalletService.get_wallet(user)
+
+        # Idempotency check
         if idempotency_key:
             existing = PaymentTransaction.objects.filter(metadata__idempotency_key=idempotency_key).first()
             if existing:
                 return existing
 
-        wallet = WalletService.get_wallet(user)
+        # Check balance
+        if wallet.inr_balance < amount_inr:
+            raise InsufficientBalanceError(
+                f"Insufficient INR balance. Available: ₹{wallet.inr_balance}, Required: ₹{amount_inr}"
+            )
+
+        # Generate deterministic unique placeholder EVM address from merchant name
+        import hashlib
+        name_hash = hashlib.sha256(merchant_name.lower().encode()).hexdigest()[:40]
+        placeholder_address = f"0x{name_hash}"
+
+        # Get or create shadow merchant — unique by name only
+        # Each shadow merchant gets its own MERCHANT-type wallet (OneToOneField requirement)
+        try:
+            merchant = Merchant.objects.get(name=merchant_name)
+            merchant_wallet = merchant.internal_wallet or WalletService.get_treasury_wallet(WalletType.TREASURY_SETTLEMENT)
+        except Merchant.DoesNotExist:
+            from apps.wallet.models import Wallet as WalletModel
+            merchant_wallet = WalletModel.objects.create(
+                type=WalletType.MERCHANT,
+                label=f"Shadow wallet — {merchant_name}",
+            )
+            merchant = Merchant.objects.create(
+                name=merchant_name,
+                user=None,
+                wallet_address=placeholder_address,
+                internal_wallet=merchant_wallet,
+                status=MerchantStatus.ACTIVE,
+            )
+
         reference_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
 
-        # 1. Get or Create Merchant
-        merchant, _ = Merchant.objects.get_or_create(
-            name=merchant_name,
-            defaults={"category": merchant_category}
-        )
-        if not hasattr(merchant, 'merchant_profile') or not merchant.wallet:
-            merchant_wallet = WalletService.get_treasury_wallet(WalletType.MERCHANT)
-            merchant.wallet = merchant_wallet
-            merchant.save()
-        else:
-            merchant_wallet = merchant.wallet
-
-        inr_balance = wallet.inr_balance
-        inr_from_balance = Decimal("0.00")
-        usdt_converted = Decimal("0.00000000")
-        inr_from_conversion = Decimal("0.00")
-        related_conversion = None
-        conversion_rate = None
-
-        # 2. Check Balances & Auto-Convert if needed
-        if inr_balance >= amount_inr:
-            inr_from_balance = amount_inr
-        else:
-            inr_from_balance = inr_balance
-            inr_needed = amount_inr - inr_balance
-
-            rate_obj = RateService.get_current_rate("USDT_INR")
-            if not rate_obj:
-                raise ExchangeRateUnavailableError()
-
-            quote = RateService.calculate_conversion("USDT", "INR", Decimal("1"), rate_obj)
-            effective_rate = quote["to_amount"]
-
-            usdt_required = (inr_needed / effective_rate).quantize(Decimal("0.00000001"))
-            usdt_required = usdt_required * Decimal("1.01")  # 1% buffer
-
-            if wallet.usdt_balance < usdt_required:
-                raise InsufficientBalanceError(
-                    f"Insufficient balance. Need ₹{amount_inr}, have ₹{inr_balance} INR "
-                    f"and ${wallet.usdt_balance} USDT (need ~${usdt_required} USDT more)"
-                )
-
-            related_conversion = ConversionService.convert(user, "USDT", "INR", usdt_required)
-            inr_from_conversion = related_conversion.to_amount
-            usdt_converted = usdt_required
-            conversion_rate = rate_obj.sell_rate
-
-            wallet.refresh_from_db()
-
-        # 3. Create Payment Record
         payment = PaymentTransaction.objects.create(
             user=user,
             wallet=wallet,
             merchant=merchant,
             amount_inr=amount_inr,
-            inr_from_balance=inr_from_balance,
-            usdt_converted=usdt_converted,
-            inr_from_conversion=inr_from_conversion,
-            conversion_rate=conversion_rate,
+            inr_from_balance=amount_inr,
+            usdt_converted=Decimal("0.00"),
+            inr_from_conversion=Decimal("0.00"),
             description=description or f"Payment to {merchant_name}",
-            status="PENDING",
+            status=PaymentStatus.CONFIRMED,  # INR payments settle immediately
             reference_id=reference_id,
-            related_conversion=related_conversion,
-            metadata={"idempotency_key": idempotency_key} if idempotency_key else {}
+            metadata={"category": merchant_category, "idempotency_key": idempotency_key or ""},
         )
 
-        try:
-            # 4. Double-Entry Transfer: User Wallet -> Merchant Wallet
-            journal = WalletService.transfer(
-                from_wallet=wallet,
-                to_wallet=merchant_wallet,
-                currency="INR",
-                amount=amount_inr,
-                category="PAYMENT",
-                description=f"Payment to {merchant.name}",
-                reference_id=f"PAY-{reference_id}",
-                idempotency_key=f"PAY-{reference_id}",
-                actor=user,
-            )
+        # Debit user wallet
+        WalletService.transfer(
+            from_wallet=wallet,
+            to_wallet=merchant_wallet,
+            currency="INR",
+            amount=amount_inr,
+            category="PAYMENT",
+            description=description or f"Payment to {merchant_name}",
+            reference_id=reference_id,
+            idempotency_key=f"PAY-{reference_id}",
+            actor=user,
+            metadata={"payment_id": str(payment.id)},
+        )
 
-            payment.status = "COMPLETED"
-            payment.metadata["journal_id"] = str(journal.id)
-            payment.save(update_fields=["status", "metadata"])
-
-            logger.info(f"[PAYMENT] ₹{amount_inr} → {merchant.name} | ref={reference_id}")
-
-        except Exception as e:
-            payment.status = "FAILED"
-            payment.save(update_fields=["status"])
-            logger.error(f"[PAYMENT FAILED] {reference_id}: {e}")
-            raise TransactionError(f"Payment failed: {str(e)}")
-
+        logger.info(f"[PAYMENT] INR ₹{amount_inr} to {merchant_name} settled immediately")
         return payment

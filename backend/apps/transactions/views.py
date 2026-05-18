@@ -42,16 +42,19 @@ class ConvertView(APIView):
             amount=d["amount"],
         )
 
-        # Async notification
-        notify_transaction.delay(
-            user_id=str(request.user.id),
-            event_type="CONVERSION",
-            data={
-                "from": f"{d['amount']} {d['from_currency']}",
-                "to": f"{conversion.to_amount} {d['to_currency']}",
-                "reference_id": conversion.reference_id,
-            },
-        )
+        # Async notification (best-effort — don't fail the response if Celery is down)
+        try:
+            notify_transaction.delay(
+                user_id=str(request.user.id),
+                event_type="CONVERSION",
+                data={
+                    "from": f"{d['amount']} {d['from_currency']}",
+                    "to": f"{conversion.to_amount} {d['to_currency']}",
+                    "reference_id": conversion.reference_id,
+                },
+            )
+        except Exception:
+            pass
 
         return APIResponse.created(
             data=ConversionHistorySerializer(conversion).data,
@@ -93,15 +96,19 @@ class PaymentView(APIView):
             idempotency_key=idempotency_key,
         )
 
-        notify_transaction.delay(
-            user_id=str(request.user.id),
-            event_type="PAYMENT",
-            data={
-                "merchant": d["merchant_name"],
-                "amount": f"₹{d['amount_inr']}",
-                "reference_id": payment.reference_id,
-            },
-        )
+        # Async notification (best-effort)
+        try:
+            notify_transaction.delay(
+                user_id=str(request.user.id),
+                event_type="PAYMENT",
+                data={
+                    "merchant": d["merchant_name"],
+                    "amount": f"₹{d['amount_inr']}",
+                    "reference_id": payment.reference_id,
+                },
+            )
+        except Exception:
+            pass
 
         return APIResponse.created(
             data=PaymentTransactionSerializer(payment).data,

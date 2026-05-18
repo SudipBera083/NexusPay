@@ -9,14 +9,20 @@ class WalletType(models.TextChoices):
     USER = "USER", "User Wallet"
     MERCHANT = "MERCHANT", "Merchant Wallet"
     TREASURY_EXTERNAL = "TREASURY_EXTERNAL", "External Banking System"
+    TREASURY_EXTERNAL_UPI = "TREASURY_EXTERNAL_UPI", "UPI On-Ramp Treasury"
+    TREASURY_USDC_RESERVE = "TREASURY_USDC_RESERVE", "USDC Reserve Treasury"
     TREASURY_RESERVE_INR = "TREASURY_RESERVE_INR", "INR Reserve Treasury"
     TREASURY_RESERVE_USDT = "TREASURY_RESERVE_USDT", "USDT Reserve Treasury"
+    TREASURY_SETTLEMENT = "TREASURY_SETTLEMENT", "Merchant Settlement Pool"
     TREASURY_FEES = "TREASURY_FEES", "Fee Collection Treasury"
+    TREASURY_BLOCKCHAIN_GAS = "TREASURY_BLOCKCHAIN_GAS", "Gas Reserve Treasury"
+    TREASURY_RISK_BUFFER = "TREASURY_RISK_BUFFER", "Risk Buffer Treasury"
 
 
 class CurrencyChoice(models.TextChoices):
     INR = "INR", "Indian Rupee"
     USDT = "USDT", "Tether USD"
+    USDC = "USDC", "USD Coin"
 
 
 class TransactionType(models.TextChoices):
@@ -51,8 +57,10 @@ class Wallet(models.Model):
         null=True,
         blank=True,
     )
+    label = models.CharField(max_length=255, blank=True, default="", help_text="Display name for treasury/merchant wallets")
     inr_balance = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
     usdt_balance = models.DecimalField(max_digits=15, decimal_places=8, default=Decimal("0.00000000"))
+    usdc_balance = models.DecimalField(max_digits=24, decimal_places=8, default=Decimal("0.00000000"))
     web3_address = models.CharField(max_length=42, null=True, blank=True, unique=True, help_text="Linked external EVM wallet address")
     is_active = models.BooleanField(default=True)
     is_locked = models.BooleanField(default=False)
@@ -70,11 +78,30 @@ class Wallet(models.Model):
         return f"{self.get_type_display()} INR={self.inr_balance} USDT={self.usdt_balance}"
 
     def get_balance(self, currency: str) -> Decimal:
-        if currency == CurrencyChoice.INR:
+        if currency in [CurrencyChoice.INR, "INR"]:
             return self.inr_balance
-        elif currency == CurrencyChoice.USDT:
+        elif currency in [CurrencyChoice.USDC, "USDC"]:
+            return self.usdc_balance
+        elif currency in [CurrencyChoice.USDT, "USDT"]:
             return self.usdt_balance
         raise ValueError(f"Unknown currency: {currency}")
+
+    def set_balance(self, currency: str, value: Decimal):
+        if currency in [CurrencyChoice.INR, "INR"]:
+            self.inr_balance = value
+        elif currency in [CurrencyChoice.USDC, "USDC"]:
+            self.usdc_balance = value
+        elif currency in [CurrencyChoice.USDT, "USDT"]:
+            self.usdt_balance = value
+        else:
+            raise ValueError(f"Unknown currency: {currency}")
+
+    def balance_field(self, currency: str) -> str:
+        if currency in [CurrencyChoice.INR, "INR"]:
+            return "inr_balance"
+        elif currency in [CurrencyChoice.USDC, "USDC"]:
+            return "usdc_balance"
+        return "usdt_balance"
 
 
 class JournalEntry(models.Model):

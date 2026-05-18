@@ -7,8 +7,7 @@ import { authAPI } from '@/api/client'
 import toast from 'react-hot-toast'
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, CreditCard,
-  BarChart3, ShieldCheck, LogOut, Bell, Menu, X,
-  Zap, ChevronDown, User, Wifi, WifiOff
+  Zap, ChevronDown, User, Wifi, WifiOff, Store, Activity
 } from 'lucide-react'
 import { formatINR } from '@/utils/format'
 import clsx from 'clsx'
@@ -19,6 +18,8 @@ const navItems = [
   { to: '/convert', icon: ArrowLeftRight, label: 'Convert' },
   { to: '/pay', icon: CreditCard, label: 'Pay' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { to: '/merchant', icon: Store, label: 'Merchant Center' },
+  { to: '/explorer', icon: Activity, label: 'Explorer' },
 ]
 
 export default function Layout() {
