@@ -1,0 +1,125 @@
+--progress is a global compose flag, better use `docker compose --progress xx build ...
+time="2026-05-19T00:46:36+05:30" level=warning msg="c:\\Users\\sudip\\Desktop\\X\\nexuspay\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+ Image nexuspay-frontend Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 583B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 340B done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/nginx:alpine
+#3 ...
+
+#4 [internal] load metadata for docker.io/library/node:20-alpine
+#4 DONE 1.0s
+
+#3 [internal] load metadata for docker.io/library/nginx:alpine
+#3 DONE 1.0s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 2B done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 1.13kB done
+#6 DONE 0.0s
+
+#7 [builder 1/6] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+#7 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 0.1s done
+#7 DONE 0.1s
+
+#8 [builder 2/6] WORKDIR /app
+#8 CACHED
+
+#9 [stage-1 1/3] FROM docker.io/library/nginx:alpine@sha256:dc48b7a872a79fb541ba5081d320b11b549231bc63ba465a7495afaa7d2ebcb8
+#9 resolve docker.io/library/nginx:alpine@sha256:dc48b7a872a79fb541ba5081d320b11b549231bc63ba465a7495afaa7d2ebcb8 0.1s done
+#9 CACHED
+
+#10 [builder 3/6] COPY package*.json ./
+#10 DONE 0.0s
+
+#11 [builder 4/6] RUN npm install
+#11 37.91 npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+#11 37.94 npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+#11 38.68 npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+#11 39.56 npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead
+#11 39.98 npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead
+#11 42.03 npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+#11 44.86 
+#11 44.86 added 388 packages, and audited 389 packages in 45s
+#11 44.86 
+#11 44.86 127 packages are looking for funding
+#11 44.86   run `npm fund` for details
+#11 44.87 
+#11 44.87 2 moderate severity vulnerabilities
+#11 44.87 
+#11 44.87 To address all issues (including breaking changes), run:
+#11 44.87   npm audit fix --force
+#11 44.87 
+#11 44.87 Run `npm audit` for details.
+#11 44.87 npm notice
+#11 44.87 npm notice New major version of npm available! 10.8.2 -> 11.14.1
+#11 44.87 npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.14.1
+#11 44.87 npm notice To update run: npm install -g npm@11.14.1
+#11 44.87 npm notice
+#11 DONE 45.2s
+
+#12 [builder 5/6] COPY . .
+#12 DONE 0.2s
+
+#13 [builder 6/6] RUN npm run build
+#13 0.351 
+#13 0.351 > nexuspay-frontend@1.0.0 build
+#13 0.351 > vite build
+#13 0.351 
+#13 0.622 vite v5.4.21 building for production...
+#13 0.678 transforming...
+#13 1.321 ✓ 5 modules transformed.
+#13 1.327 x Build failed in 674ms
+#13 1.327 error during build:
+#13 1.327 [vite:css] [postcss] /app/src/index.css:104:5: The `focus:bg-white/8` class does not exist. If `focus:bg-white/8` is a custom class, make sure it is defined within a `@layer` directive.
+#13 1.327 file: /app/src/index.css:104:4
+#13 1.327     at Input.error (/app/node_modules/postcss/lib/input.js:135:16)
+#13 1.327     at AtRule.error (/app/node_modules/postcss/lib/node.js:146:32)
+#13 1.327     at processApply (/app/node_modules/tailwindcss/lib/lib/expandApplyAtRules.js:380:29)
+#13 1.327     at /app/node_modules/tailwindcss/lib/lib/expandApplyAtRules.js:551:9
+#13 1.327     at /app/node_modules/tailwindcss/lib/processTailwindFeatures.js:55:50
+#13 1.327     at async plugins (/app/node_modules/tailwindcss/lib/plugin.js:38:17)
+#13 1.327     at async LazyResult.runAsync (/app/node_modules/postcss/lib/lazy-result.js:293:11)
+#13 1.327     at async compileCSS (file:///app/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:36898:21)
+#13 1.327     at async Object.transform (file:///app/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:36171:11)
+#13 1.327     at async transform (file:///app/node_modules/rollup/dist/es/shared/node-entry.js:21678:16)
+#13 ERROR: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1
+------
+ > [builder 6/6] RUN npm run build:
+1.327     at Input.error (/app/node_modules/postcss/lib/input.js:135:16)
+1.327     at AtRule.error (/app/node_modules/postcss/lib/node.js:146:32)
+1.327     at processApply (/app/node_modules/tailwindcss/lib/lib/expandApplyAtRules.js:380:29)
+1.327     at /app/node_modules/tailwindcss/lib/lib/expandApplyAtRules.js:551:9
+1.327     at /app/node_modules/tailwindcss/lib/processTailwindFeatures.js:55:50
+1.327     at async plugins (/app/node_modules/tailwindcss/lib/plugin.js:38:17)
+1.327     at async LazyResult.runAsync (/app/node_modules/postcss/lib/lazy-result.js:293:11)
+1.327     at async compileCSS (file:///app/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:36898:21)
+1.327     at async Object.transform (file:///app/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:36171:11)
+1.327     at async transform (file:///app/node_modules/rollup/dist/es/shared/node-entry.js:21678:16)
+------
+Dockerfile:7
+
+--------------------
+
+   5 |     RUN npm install
+
+   6 |     COPY . .
+
+   7 | >>> RUN npm run build
+
+   8 |     
+
+   9 |     # Production stage
+
+--------------------
+
+failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1
+
