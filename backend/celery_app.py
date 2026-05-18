@@ -24,6 +24,10 @@ app.conf.beat_schedule = {
         "task": "apps.admin_panel.tasks.generate_daily_audit_report",
         "schedule": crontab(hour=0, minute=0),
     },
+    "scan-fraud-signals": {
+        "task": "apps.admin_panel.tasks.scan_fraud_signals",
+        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+    },
 }
 
 

@@ -75,3 +75,45 @@ class PaymentTransaction(models.Model):
 
     def __str__(self):
         return f"Payment ₹{self.amount_inr} to {self.merchant_name} [{self.status}]"
+
+
+class RiskFlagSeverity(models.TextChoices):
+    LOW = "LOW", "Low"
+    MEDIUM = "MEDIUM", "Medium"
+    HIGH = "HIGH", "High"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class RiskFlag(models.Model):
+    """Persisted fraud/risk signals for compliance and admin review"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="risk_flags"
+    )
+    wallet = models.ForeignKey(
+        Wallet, on_delete=models.CASCADE, related_name="risk_flags", null=True, blank=True
+    )
+    transaction = models.ForeignKey(
+        "wallet.WalletTransaction",
+        null=True, blank=True, on_delete=models.SET_NULL, related_name="risk_flags"
+    )
+    flag_type = models.CharField(max_length=50)  # e.g. LARGE_TRANSACTION, RAPID_SPENDING, HIGH_FREQUENCY
+    severity = models.CharField(max_length=20, choices=RiskFlagSeverity.choices, default=RiskFlagSeverity.MEDIUM)
+    details = models.JSONField(default=dict)
+    is_reviewed = models.BooleanField(default=False)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="reviewed_flags"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "risk_flags"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["severity", "is_reviewed"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.flag_type} — {self.user_id}"

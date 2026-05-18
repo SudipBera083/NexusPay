@@ -252,17 +252,33 @@ class AdminSetExchangeRateView(APIView):
         if not ser.is_valid():
             return APIResponse.validation_error(ser.errors)
 
+        rate_val = ser.validated_data["rate"]
+        spread = ser.validated_data.get("spread", Decimal("0.5"))
+        spread_factor = spread / 100
+
         rate_obj = ExchangeRate.objects.create(
             currency_pair="USDT_INR",
-            rate=ser.validated_data["rate"],
-            spread=ser.validated_data.get("spread", Decimal("0.5")),
+            rate=rate_val,
+            bid=rate_val * (1 - spread_factor),
+            ask=rate_val * (1 + spread_factor),
+            spread=spread,
             source="Admin Override",
         )
 
-        AuditLog.log(actor=request.user, action="EXCHANGE_RATE_OVERRIDE", resource_type="ExchangeRate",
-                     resource_id=str(rate_obj.id), after={"rate": str(rate_obj.rate)}, request=request)
+        # Invalidate Redis cache so next request picks up this overridden rate
+        from django.core.cache import cache
+        cache.delete("nexuspay:exchange_rate:USDT_INR")
+
+        AuditLog.log(
+            actor=request.user,
+            action="EXCHANGE_RATE_OVERRIDE",
+            resource_type="ExchangeRate",
+            resource_id=str(rate_obj.id),
+            after={"rate": str(rate_obj.rate), "spread": str(spread), "bid": str(rate_obj.bid), "ask": str(rate_obj.ask)},
+            request=request,
+        )
 
         return APIResponse.created(
             data=ExchangeRateSerializer(rate_obj).data,
-            message="Exchange rate overridden",
+            message=f"Exchange rate overridden to ₹{rate_val} (spread {spread}%)",
         )

@@ -2,12 +2,13 @@ import React, { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { useExchangeStore, useNotificationStore } from '@/store/walletStore'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import { authAPI } from '@/api/client'
 import toast from 'react-hot-toast'
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, CreditCard,
   BarChart3, ShieldCheck, LogOut, Bell, Menu, X,
-  Zap, ChevronDown, User
+  Zap, ChevronDown, User, Wifi, WifiOff
 } from 'lucide-react'
 import { formatINR } from '@/utils/format'
 import clsx from 'clsx'
@@ -22,11 +23,14 @@ const navItems = [
 
 export default function Layout() {
   const { user, logout, refreshToken, isAdmin } = useAuthStore()
-  const { currentRate } = useExchangeStore()
+  const { currentRate, isLive } = useExchangeStore()
   const unreadCount = useNotificationStore((s) => s.notifications.filter((n) => !n.read).length)
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+
+  // Establish persistent WebSocket connections for live balance + rate updates
+  const { isConnected } = useWebSocket()
 
   const handleLogout = async () => {
     try {
@@ -161,6 +165,14 @@ export default function Layout() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* WS live indicator */}
+            <div className={`hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${isConnected ? 'text-emerald-400 bg-emerald-500/10' : 'text-white/30 bg-white/5'}`}>
+              {isConnected
+                ? <><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Live</>
+                : <><WifiOff className="w-3 h-3" />Offline</>
+              }
+            </div>
+
             {/* Notification bell */}
             <button className="relative p-2 rounded-xl hover:bg-white/10 transition-colors">
               <Bell className="w-5 h-5 text-white/60" />

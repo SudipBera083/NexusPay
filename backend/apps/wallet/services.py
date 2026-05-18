@@ -1,9 +1,8 @@
-"""Wallet service layer — atomic credit/debit with ledger recording"""
+"""Wallet service layer — atomic credit/debit with ledger recording, audit logging, and WS notifications"""
 import logging
 import uuid
 from decimal import Decimal
 from django.db import transaction
-from django.db.models import F
 
 from core.exceptions import (
     InsufficientBalanceError,
@@ -28,14 +27,15 @@ class WalletService:
                 action="WALLET_CREATED",
                 resource_type="Wallet",
                 resource_id=str(wallet.id),
-                after={"user": str(user.id)},
+                after={"user": str(user.id), "inr_balance": "0.00", "usdt_balance": "0.00000000"},
             )
         return wallet
 
     @staticmethod
     def get_wallet(user) -> Wallet:
+        """Get user wallet — plain fetch, no lock (use inside atomic for locking)"""
         try:
-            return Wallet.objects.select_for_update().get(user=user, is_active=True)
+            return Wallet.objects.get(user=user, is_active=True)
         except Wallet.DoesNotExist:
             raise WalletNotFoundError()
 
@@ -51,11 +51,11 @@ class WalletService:
         metadata: dict = None,
         actor=None,
     ) -> WalletTransaction:
-        """Credit funds to wallet — atomic, ledger-based"""
+        """Credit funds to wallet — atomic, ledger-based, with audit log"""
         if wallet.is_locked:
             raise WalletLockedError(f"Wallet locked: {wallet.lock_reason}")
 
-        # Lock row
+        # Lock row for this transaction
         wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
 
         balance_before = wallet.get_balance(currency)
@@ -68,7 +68,8 @@ class WalletService:
             wallet.usdt_balance = balance_after
         wallet.save(update_fields=["inr_balance" if currency == CurrencyChoice.INR else "usdt_balance", "updated_at"])
 
-        # Write ledger record
+        # Write immutable ledger record
+        ref = reference_id or str(uuid.uuid4())
         tx = WalletTransaction.objects.create(
             wallet=wallet,
             transaction_type=TransactionType.CREDIT,
@@ -78,12 +79,26 @@ class WalletService:
             balance_before=balance_before,
             balance_after=balance_after,
             description=description,
-            reference_id=reference_id or str(uuid.uuid4()),
+            reference_id=ref,
             status=TransactionStatus.COMPLETED,
             metadata=metadata or {},
         )
 
+        # Audit log
+        AuditLog.log(
+            actor=actor,
+            action=f"WALLET_CREDIT_{currency}",
+            resource_type="WalletTransaction",
+            resource_id=str(tx.id),
+            before={"balance": str(balance_before)},
+            after={"balance": str(balance_after), "amount": str(amount), "category": category},
+        )
+
         logger.info(f"[CREDIT] {currency} {amount} → wallet {wallet.id} | bal: {balance_before}→{balance_after}")
+
+        # Fire async WS notification (after transaction commits)
+        transaction.on_commit(lambda: _fire_wallet_update(wallet))
+
         return tx
 
     @staticmethod
@@ -98,7 +113,7 @@ class WalletService:
         metadata: dict = None,
         actor=None,
     ) -> WalletTransaction:
-        """Debit funds from wallet — atomic with balance check"""
+        """Debit funds from wallet — atomic with balance check, audit log"""
         if wallet.is_locked:
             raise WalletLockedError(f"Wallet locked: {wallet.lock_reason}")
 
@@ -118,6 +133,7 @@ class WalletService:
             wallet.usdt_balance = balance_after
         wallet.save(update_fields=["inr_balance" if currency == CurrencyChoice.INR else "usdt_balance", "updated_at"])
 
+        ref = reference_id or str(uuid.uuid4())
         tx = WalletTransaction.objects.create(
             wallet=wallet,
             transaction_type=TransactionType.DEBIT,
@@ -127,18 +143,32 @@ class WalletService:
             balance_before=balance_before,
             balance_after=balance_after,
             description=description,
-            reference_id=reference_id or str(uuid.uuid4()),
+            reference_id=ref,
             status=TransactionStatus.COMPLETED,
             metadata=metadata or {},
         )
 
+        # Audit log
+        AuditLog.log(
+            actor=actor,
+            action=f"WALLET_DEBIT_{currency}",
+            resource_type="WalletTransaction",
+            resource_id=str(tx.id),
+            before={"balance": str(balance_before)},
+            after={"balance": str(balance_after), "amount": str(amount), "category": category},
+        )
+
         logger.info(f"[DEBIT] {currency} {amount} ← wallet {wallet.id} | bal: {balance_before}→{balance_after}")
+
+        # Fire async WS notification after commit
+        transaction.on_commit(lambda: _fire_wallet_update(wallet))
+
         return tx
 
     @staticmethod
     @transaction.atomic
     def reverse_transaction(tx_id: str, actor=None) -> WalletTransaction:
-        """Reverse a completed transaction"""
+        """Reverse a completed transaction — atomic, with audit log"""
         try:
             original_tx = WalletTransaction.objects.select_for_update().get(
                 id=tx_id, status=TransactionStatus.COMPLETED
@@ -187,12 +217,24 @@ class WalletService:
         original_tx.status = TransactionStatus.REVERSED
         original_tx.save(update_fields=["status"])
 
+        # Audit log
+        AuditLog.log(
+            actor=actor,
+            action="TRANSACTION_REVERSED",
+            resource_type="WalletTransaction",
+            resource_id=str(original_tx.id),
+            before={"status": "COMPLETED"},
+            after={"status": "REVERSED", "reversal_tx": str(reversal_tx.id)},
+        )
+
         logger.info(f"[REVERSAL] Transaction {tx_id} reversed → new tx {reversal_tx.id}")
+
+        transaction.on_commit(lambda: _fire_wallet_update(wallet))
         return reversal_tx
 
     @staticmethod
     def simulate_deposit(wallet: Wallet, currency: str, amount: Decimal, actor=None) -> WalletTransaction:
-        """Simulate fiat/crypto deposit — for demo purposes"""
+        """Simulate fiat/crypto deposit"""
         return WalletService.credit(
             wallet=wallet,
             currency=currency,
@@ -202,3 +244,18 @@ class WalletService:
             metadata={"source": "simulation"},
             actor=actor,
         )
+
+
+def _fire_wallet_update(wallet: Wallet):
+    """Fire Celery task to push updated balance via WebSocket (called after commit)"""
+    try:
+        from apps.notifications.tasks import notify_wallet_update
+        # Re-fetch fresh balances
+        wallet.refresh_from_db()
+        notify_wallet_update.delay(
+            user_id=str(wallet.user_id),
+            inr_balance=str(wallet.inr_balance),
+            usdt_balance=str(wallet.usdt_balance),
+        )
+    except Exception as e:
+        logger.warning(f"[WS NOTIFY] Could not fire wallet update: {e}")
