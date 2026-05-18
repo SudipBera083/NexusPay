@@ -32,7 +32,15 @@ export default function Login() {
       toast.success(`Welcome back, ${user.first_name}!`)
       navigate('/dashboard')
     } catch (err) {
-      const msg = err.response?.data?.message || 'Login failed. Please check your credentials.'
+      const data = err.response?.data
+      let msg = data?.message || 'Login failed. Please check your credentials.'
+      if (data?.errors?.non_field_errors) {
+        msg = data.errors.non_field_errors[0]
+      } else if (data?.errors?.email) {
+        msg = `Email: ${data.errors.email[0]}`
+      } else if (data?.errors?.password) {
+        msg = `Password: ${data.errors.password[0]}`
+      }
       toast.error(msg)
     } finally {
       setIsLoading(false)

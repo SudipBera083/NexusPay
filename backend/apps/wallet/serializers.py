@@ -12,7 +12,7 @@ class WalletSerializer(serializers.ModelSerializer):
         model = Wallet
         fields = [
             "id", "user_email", "user_name",
-            "inr_balance", "usdt_balance",
+            "inr_balance", "usdt_balance", "web3_address",
             "is_active", "is_locked", "lock_reason",
             "created_at", "updated_at",
         ]

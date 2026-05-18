@@ -3,7 +3,22 @@ import uuid
 from decimal import Decimal
 from django.db import models
 from django.conf import settings
-from apps.wallet.models import Wallet
+from apps.wallet.models import Wallet, WalletType
+
+
+class Merchant(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, unique=True)
+    category = models.CharField(max_length=100, default="General")
+    wallet = models.OneToOneField(Wallet, on_delete=models.CASCADE, related_name="merchant_profile")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "merchants"
+        verbose_name = "Merchant"
+
+    def __str__(self):
+        return f"{self.name} ({self.category})"
 
 
 class ConversionStatus(models.TextChoices):
@@ -47,9 +62,7 @@ class PaymentTransaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="payments")
-    merchant_name = models.CharField(max_length=255)
-    merchant_id = models.CharField(max_length=100, default="MERCHANT_SIM")
-    merchant_category = models.CharField(max_length=100, default="General")
+    merchant = models.ForeignKey(Merchant, on_delete=models.PROTECT, related_name="payments")
     amount_inr = models.DecimalField(max_digits=15, decimal_places=2)
     inr_from_balance = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
     usdt_converted = models.DecimalField(max_digits=15, decimal_places=8, default=Decimal("0.00000000"))
@@ -74,7 +87,7 @@ class PaymentTransaction(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"Payment ₹{self.amount_inr} to {self.merchant_name} [{self.status}]"
+        return f"Payment ₹{self.amount_inr} to {self.merchant.name} [{self.status}]"
 
 
 class RiskFlagSeverity(models.TextChoices):

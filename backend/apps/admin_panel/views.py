@@ -185,6 +185,11 @@ class AdminStatsView(APIView):
         total_inr = Wallet.objects.aggregate(total=Sum("inr_balance"))["total"] or 0
         total_usdt = Wallet.objects.aggregate(total=Sum("usdt_balance"))["total"] or 0
 
+        # Treasury balances
+        treasury_inr = Wallet.objects.filter(type="TREASURY_RESERVE_INR").aggregate(total=Sum("inr_balance"))["total"] or 0
+        treasury_usdt = Wallet.objects.filter(type="TREASURY_RESERVE_USDT").aggregate(total=Sum("usdt_balance"))["total"] or 0
+        treasury_fees = Wallet.objects.filter(type="TREASURY_FEES").aggregate(total=Sum("inr_balance"))["total"] or 0
+
         today_payments = PaymentTransaction.objects.filter(created_at__gte=today)
         today_revenue = today_payments.aggregate(total=Sum("amount_inr"))["total"] or 0
 
@@ -208,6 +213,9 @@ class AdminStatsView(APIView):
             "balances": {
                 "total_inr_in_system": str(total_inr),
                 "total_usdt_in_system": str(total_usdt),
+                "treasury_reserve_inr": str(treasury_inr),
+                "treasury_reserve_usdt": str(treasury_usdt),
+                "treasury_fees_inr": str(treasury_fees),
             },
             "today": {
                 "payment_volume_inr": str(today_revenue),

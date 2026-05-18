@@ -5,6 +5,15 @@ from django.db import models
 from django.conf import settings
 
 
+class WalletType(models.TextChoices):
+    USER = "USER", "User Wallet"
+    MERCHANT = "MERCHANT", "Merchant Wallet"
+    TREASURY_EXTERNAL = "TREASURY_EXTERNAL", "External Banking System"
+    TREASURY_RESERVE_INR = "TREASURY_RESERVE_INR", "INR Reserve Treasury"
+    TREASURY_RESERVE_USDT = "TREASURY_RESERVE_USDT", "USDT Reserve Treasury"
+    TREASURY_FEES = "TREASURY_FEES", "Fee Collection Treasury"
+
+
 class CurrencyChoice(models.TextChoices):
     INR = "INR", "Indian Rupee"
     USDT = "USDT", "Tether USD"
@@ -34,13 +43,17 @@ class TransactionCategory(models.TextChoices):
 
 class Wallet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    type = models.CharField(max_length=30, choices=WalletType.choices, default=WalletType.USER)
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="wallet",
+        null=True,
+        blank=True,
     )
     inr_balance = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
     usdt_balance = models.DecimalField(max_digits=15, decimal_places=8, default=Decimal("0.00000000"))
+    web3_address = models.CharField(max_length=42, null=True, blank=True, unique=True, help_text="Linked external EVM wallet address")
     is_active = models.BooleanField(default=True)
     is_locked = models.BooleanField(default=False)
     lock_reason = models.CharField(max_length=255, blank=True)
@@ -52,7 +65,9 @@ class Wallet(models.Model):
         verbose_name = "Wallet"
 
     def __str__(self):
-        return f"Wallet({self.user.email}) INR={self.inr_balance} USDT={self.usdt_balance}"
+        if self.type == WalletType.USER and self.user:
+            return f"Wallet({self.user.email}) INR={self.inr_balance} USDT={self.usdt_balance}"
+        return f"{self.get_type_display()} INR={self.inr_balance} USDT={self.usdt_balance}"
 
     def get_balance(self, currency: str) -> Decimal:
         if currency == CurrencyChoice.INR:
@@ -62,8 +77,22 @@ class Wallet(models.Model):
         raise ValueError(f"Unknown currency: {currency}")
 
 
+class JournalEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "journal_entries"
+        verbose_name = "Journal Entry"
+
+    def __str__(self):
+        return f"Journal {self.id}"
+
+
 class WalletTransaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journal_entry = models.ForeignKey(JournalEntry, on_delete=models.PROTECT, related_name="transactions", null=True)
     wallet = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="transactions")
     transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
     currency = models.CharField(max_length=10, choices=CurrencyChoice.choices)
@@ -77,6 +106,7 @@ class WalletTransaction(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="related"
     )
     status = models.CharField(max_length=20, choices=TransactionStatus.choices, default=TransactionStatus.COMPLETED)
+    idempotency_key = models.CharField(max_length=100, unique=True, null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)

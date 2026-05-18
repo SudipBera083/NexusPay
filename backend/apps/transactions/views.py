@@ -30,6 +30,11 @@ class ConvertView(APIView):
             return APIResponse.validation_error(serializer.errors)
 
         d = serializer.validated_data
+        idempotency_key = request.headers.get("Idempotency-Key")
+
+        # Convert doesn't have an idempotency_key parameter in the service right now because we rewrote it to generate them internally for legs, 
+        # but let's pass it anyway if we wanted to block duplicates at view level. 
+        # For now we will just rely on the service generating LEG-specific keys based on reference_id.
         conversion = ConversionService.convert(
             user=request.user,
             from_currency=d["from_currency"],
@@ -77,12 +82,15 @@ class PaymentView(APIView):
             return APIResponse.validation_error(serializer.errors)
 
         d = serializer.validated_data
+        idempotency_key = request.headers.get("Idempotency-Key")
+        
         payment = PaymentService.process_payment(
             user=request.user,
             merchant_name=d["merchant_name"],
             amount_inr=d["amount_inr"],
             description=d.get("description", ""),
             merchant_category=d.get("merchant_category", "General"),
+            idempotency_key=idempotency_key,
         )
 
         notify_transaction.delay(

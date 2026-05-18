@@ -96,3 +96,44 @@ class WalletTransactionDetailView(APIView):
         except (Wallet.DoesNotExist, WalletTransaction.DoesNotExist):
             return APIResponse.not_found("Transaction not found")
         return APIResponse.success(data=WalletTransactionSerializer(tx).data)
+
+
+class Web3ConnectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["Wallet"], summary="Link Web3 wallet via signature verification")
+    def post(self, request):
+        from eth_account.messages import encode_defunct
+        from eth_account import Account
+
+        address = request.data.get("address")
+        message = request.data.get("message")
+        signature = request.data.get("signature")
+
+        if not all([address, message, signature]):
+            return APIResponse.error("address, message, and signature are required", status_code=400)
+
+        try:
+            # Verify signature matches the message and was signed by the address
+            signable_message = encode_defunct(text=message)
+            recovered_address = Account.recover_message(signable_message, signature=signature)
+
+            if recovered_address.lower() != address.lower():
+                return APIResponse.error("Signature verification failed. Address mismatch.", status_code=401)
+
+            # Link address to wallet
+            wallet = Wallet.objects.get(user=request.user)
+            
+            # Check if address is already linked to another wallet
+            if Wallet.objects.filter(web3_address__iexact=address).exclude(id=wallet.id).exists():
+                return APIResponse.error("This wallet address is already linked to another account.", status_code=400)
+
+            wallet.web3_address = address
+            wallet.save(update_fields=["web3_address", "updated_at"])
+            
+            logger.info(f"[WEB3] User {request.user.email} successfully linked wallet {address}")
+            return APIResponse.success(message=f"Web3 wallet {address} linked successfully!")
+
+        except Exception as e:
+            logger.error(f"[WEB3 ERROR] Failed to link wallet for {request.user.email}: {e}")
+            return APIResponse.error(f"Failed to verify signature: {str(e)}", status_code=400)

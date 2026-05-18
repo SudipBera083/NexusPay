@@ -95,6 +95,7 @@ export const walletAPI = {
   deposit: (data) => api.post('/wallet/deposit/', data),
   getTransactions: (params) => api.get('/wallet/transactions/', { params }),
   getTransaction: (id) => api.get(`/wallet/transactions/${id}/`),
+  linkWeb3Wallet: (data) => api.post('/wallet/web3/link/', data),
 }
 
 export const exchangeAPI = {
@@ -104,9 +105,13 @@ export const exchangeAPI = {
 }
 
 export const transactionAPI = {
-  convert: (data) => api.post('/transactions/convert/', data),
+  convert: (data) => api.post('/transactions/convert/', data, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() }
+  }),
   getConversions: (params) => api.get('/transactions/conversions/', { params }),
-  pay: (data) => api.post('/transactions/pay/', data),
+  pay: (data) => api.post('/transactions/pay/', data, {
+    headers: { 'Idempotency-Key': crypto.randomUUID() }
+  }),
   getPayments: (params) => api.get('/transactions/payments/', { params }),
 }
 

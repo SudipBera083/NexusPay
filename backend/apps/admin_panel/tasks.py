@@ -36,6 +36,64 @@ def generate_daily_audit_report():
     return report
 
 
+@shared_task(name="apps.admin_panel.tasks.run_ledger_reconciliation")
+def run_ledger_reconciliation():
+    """
+    Runs background double-entry reconciliation:
+    1. Checks if System Net Balance == 0 (across all wallets).
+    2. Checks if each wallet's balance equals the sum of its debits and credits.
+    """
+    from apps.wallet.models import Wallet, WalletTransaction, TransactionType
+    from apps.transactions.models import RiskFlag
+    from django.db.models import Sum
+    from decimal import Decimal
+
+    logger.info("[RECONCILIATION] Starting ledger reconciliation...")
+
+    # 1. System Net Balance Check
+    system_net_inr = Wallet.objects.aggregate(total=Sum("inr_balance"))["total"] or Decimal("0.00")
+    system_net_usdt = Wallet.objects.aggregate(total=Sum("usdt_balance"))["total"] or Decimal("0.00000000")
+
+    if system_net_inr != Decimal("0.00") or system_net_usdt != Decimal("0.00000000"):
+        logger.error(f"[RECONCILIATION] FATAL: System Net Balance mismatch! INR: {system_net_inr}, USDT: {system_net_usdt}")
+        # Create a critical system risk flag
+        RiskFlag.objects.create(
+            flag_type="SYSTEM_RECONCILIATION_FAILURE",
+            severity="CRITICAL",
+            details={
+                "error": "System net balance is not zero",
+                "net_inr": str(system_net_inr),
+                "net_usdt": str(system_net_usdt),
+            }
+        )
+
+    # 2. Wallet Level Check
+    discrepancies = 0
+    for wallet in Wallet.objects.all():
+        credits_inr = WalletTransaction.objects.filter(wallet=wallet, currency="INR", transaction_type=TransactionType.CREDIT).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        debits_inr = WalletTransaction.objects.filter(wallet=wallet, currency="INR", transaction_type=TransactionType.DEBIT).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        expected_inr = credits_inr - debits_inr
+
+        if expected_inr != wallet.inr_balance:
+            logger.error(f"[RECONCILIATION] Mismatch in wallet {wallet.id} (INR). Expected: {expected_inr}, Actual: {wallet.inr_balance}")
+            discrepancies += 1
+            RiskFlag.objects.create(
+                user=wallet.user if wallet.type == "USER" else None,
+                wallet=wallet,
+                flag_type="WALLET_RECONCILIATION_MISMATCH",
+                severity="CRITICAL",
+                details={
+                    "currency": "INR",
+                    "expected": str(expected_inr),
+                    "actual": str(wallet.inr_balance),
+                }
+            )
+
+    logger.info(f"[RECONCILIATION] Complete. Discrepancies found: {discrepancies}")
+    return {"status": "Complete", "discrepancies": discrepancies}
+
+
+
 @shared_task(name="apps.admin_panel.tasks.scan_fraud_signals")
 def scan_fraud_signals():
     """

@@ -4,6 +4,7 @@ import { TrendingUp, TrendingDown, Wallet, ArrowLeftRight, CreditCard, RefreshCw
 import { Link } from 'react-router-dom'
 import { dashboardAPI, exchangeAPI } from '@/api/client'
 import { useWalletStore, useExchangeStore } from '@/store/walletStore'
+import Web3ConnectButton from '@/components/Web3ConnectButton'
 import { useAuthStore } from '@/store/authStore'
 import { formatINR, formatUSDT, formatRelativeTime, getStatusColor } from '@/utils/format'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
@@ -108,6 +109,12 @@ export default function Dashboard() {
           <StatCard title="Conversions (30d)" value={stats?.conversion_count || 0} sub="exchanges" icon={ArrowLeftRight} color="blue" />
         </div>
       </div>
+
+      {/* Web3 Connect */}
+      <Web3ConnectButton 
+        currentAddress={w?.web3_address} 
+        onConnect={(address) => setWallet({ ...w, web3_address: address })} 
+      />
 
       {/* Exchange Rate */}
       {rate?.usdt_inr_rate && (
