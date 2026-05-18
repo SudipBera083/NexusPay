@@ -106,6 +106,19 @@ DATABASES = {
     }
 }
 
+RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default="")
+RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET", default="")
+RAZORPAY_WEBHOOK_SECRET = config("RAZORPAY_WEBHOOK_SECRET", default="")
+RAZORPAY_CURRENCY = "INR"
+
+# ─── On-chain Treasury ────────────────────────────────────────────────────────
+# Private key of EVM treasury wallet that sends USDC to users on Polygon
+# Fund with MATIC (gas) + USDC on Polygon Amoy testnet or Polygon mainnet
+TREASURY_PRIVATE_KEY = config("TREASURY_PRIVATE_KEY", default="")
+
+# ─── Frontend URL ─────────────────────────────────────────────────────────────
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost")
+
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
 AUTH_USER_MODEL = "authentication.User"
@@ -297,20 +310,5 @@ LOGGING = {
         "django": {"handlers": ["console", "file"], "level": "WARNING", "propagate": False},
         "nexuspay": {"handlers": ["console", "file"], "level": "DEBUG", "propagate": False},
         "celery": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "nexuspay.blockchain": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "nexuspay.events": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
     },
 }
-
-# ─── Blockchain Configuration ─────────────────────────────────────────────────
-
-BLOCKCHAIN_CONFIG = load_blockchain_config()
-
-# ─── WalletConnect ────────────────────────────────────────────────────────────
-
-WALLETCONNECT_PROJECT_ID = config("WALLETCONNECT_PROJECT_ID", default="demo-project-id")
-
-# ─── QR Payment ───────────────────────────────────────────────────────────────
-
-QR_HMAC_SECRET = config("QR_HMAC_SECRET", default="insecure-dev-secret")
-QR_DEFAULT_EXPIRY_SECONDS = config("QR_DEFAULT_EXPIRY_SECONDS", default=300, cast=int)

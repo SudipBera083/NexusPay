@@ -165,3 +165,115 @@ class Web3ConnectView(APIView):
         except Exception as e:
             logger.error(f"[WEB3 ERROR] Failed to link wallet for {request.user.email}: {e}")
             return APIResponse.error(f"Failed to verify signature: {str(e)}", status_code=400)
+
+
+class RazorpayInitiateView(APIView):
+    """
+    POST /api/v1/wallet/deposit/upi/initiate/
+    Creates a Razorpay payment link that anyone can pay via GPay / PhonePe / UPI / Debit card.
+    Returns a short URL + QR the user shares with the payer.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["Wallet"], summary="Create UPI payment link via Razorpay")
+    def post(self, request):
+        from django.conf import settings
+        from decimal import Decimal
+
+        if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
+            return APIResponse.error(
+                "Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to .env",
+                status_code=503
+            )
+
+        amount = request.data.get("amount")
+        description = request.data.get("description", "")
+
+        if not amount:
+            return APIResponse.validation_error({"amount": ["This field is required."]})
+
+        try:
+            amount_decimal = Decimal(str(amount))
+            if amount_decimal < Decimal("1"):
+                return APIResponse.error("Minimum deposit is ₹1", status_code=400)
+        except Exception:
+            return APIResponse.validation_error({"amount": ["Enter a valid number."]})
+
+        try:
+            wallet = Wallet.objects.get(user=request.user)
+        except Wallet.DoesNotExist:
+            wallet = WalletService.create_wallet(request.user)
+
+        from .razorpay_service import RazorpayDepositService
+        try:
+            result = RazorpayDepositService.create_payment_link(
+                wallet=wallet,
+                amount_inr=amount_decimal,
+                description=description,
+            )
+            return APIResponse.created(
+                data=result,
+                message=f"Payment link created. Share the URL so anyone can pay ₹{amount_decimal} via GPay/UPI.",
+            )
+        except Exception as e:
+            logger.error(f"[RAZORPAY] Failed to create payment link: {e}")
+            return APIResponse.error(f"Failed to create payment link: {str(e)}", status_code=500)
+
+
+class RazorpayWebhookView(APIView):
+    """
+    POST /api/v1/wallet/deposit/upi/webhook/
+    Razorpay calls this when a payment succeeds.
+    Verifies HMAC signature → credits INR → auto-converts → sends USDC on-chain.
+    This endpoint must be publicly accessible (no auth) — security via HMAC.
+    """
+    permission_classes = []
+    authentication_classes = []
+
+    @extend_schema(exclude=True)
+    def post(self, request):
+        import json
+        from django.conf import settings
+
+        if not settings.RAZORPAY_WEBHOOK_SECRET:
+            logger.error("[RAZORPAY WEBHOOK] RAZORPAY_WEBHOOK_SECRET not set")
+            return APIResponse.error("Webhook not configured", status_code=503)
+
+        # Verify Razorpay HMAC signature
+        signature = request.headers.get("X-Razorpay-Signature", "")
+        from .razorpay_service import RazorpayDepositService
+
+        if not RazorpayDepositService.verify_webhook_signature(request.body, signature):
+            logger.warning("[RAZORPAY WEBHOOK] Invalid signature — rejected")
+            return APIResponse.error("Invalid signature", status_code=400)
+
+        try:
+            event_data = json.loads(request.body)
+        except Exception:
+            return APIResponse.error("Invalid JSON", status_code=400)
+
+        event = event_data.get("event")
+        logger.info(f"[RAZORPAY WEBHOOK] Event: {event}")
+
+        if event == "payment.captured":
+            success = RazorpayDepositService.process_payment_captured(event_data)
+            if success:
+                return APIResponse.success(message="Payment processed successfully")
+            else:
+                return APIResponse.error("Failed to process payment", status_code=500)
+
+        if event == "payment_link.paid":
+            # payment_link.paid also contains payment entity
+            payment_entity = (
+                event_data.get("payload", {})
+                .get("payment", {})
+                .get("entity", {})
+            )
+            if payment_entity:
+                success = RazorpayDepositService.process_payment_captured(event_data)
+                if success:
+                    return APIResponse.success(message="Payment link processed")
+
+        # Acknowledge all other events
+        return APIResponse.success(message=f"Event {event} acknowledged")
+
